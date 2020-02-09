@@ -1189,12 +1189,13 @@ MFRC522::StatusCode MFRC522::PCD_NTAG216_AUTH(byte* passWord, byte pACK[]) //Aut
 	//       (Better still, rxlength should not even be necessary.)
 
 	MFRC522::StatusCode result;
-	byte				cmdBuffer[18]; // We need room for 16 bytes data and 2 bytes CRC_A.
+	byte				cmdBuffer[7]; // (1 cmd byte, 4 password bytes, 2 crc bytes)
 	
-	cmdBuffer[0] = 0x1B; //Comando de autentificacion
+	cmdBuffer[0] = 0x1B; // PWD_AUTH command
 	
 	for (byte i = 0; i<4; i++)
 		cmdBuffer[i+1] = passWord[i];
+	//memcpy(&cmdBuffer[1], passWord, 4);
 	
 	result = PCD_CalculateCRC(cmdBuffer, 5, &cmdBuffer[5]);
 	
@@ -1203,14 +1204,16 @@ MFRC522::StatusCode MFRC522::PCD_NTAG216_AUTH(byte* passWord, byte pACK[]) //Aut
 	}
 	
 	// Transceive the data, store the reply in cmdBuffer[]
-	byte waitIRq		= 0x30;	// RxIRq and IdleIRq
-//	byte cmdBufferSize	= sizeof(cmdBuffer);
-	byte validBits		= 0;
-	byte rxlength		= 5;
-	result = PCD_CommunicateWithPICC(PCD_Transceive, waitIRq, cmdBuffer, 7, cmdBuffer, &rxlength, &validBits);
-	
-	pACK[0] = cmdBuffer[0];
-	pACK[1] = cmdBuffer[1];
+	//byte waitIRq		= 0x30;	// RxIRq and IdleIRq
+	//	byte cmdBufferSize	= sizeof(cmdBuffer);
+	//byte validBits		= 0;
+	byte outbuf[4] = { 0xA5, 0x5A };
+	byte rxlength		=  sizeof(outbuf); // (2 bytes PACK + 2 bytes CRC)
+	//result = PCD_CommunicateWithPICC(PCD_Transceive, waitIRq, cmdBuffer, 7, cmdBuffer, &rxlength, &validBits);
+	result = PCD_TransceiveData(cmdBuffer, sizeof(cmdBuffer), outbuf , &rxlength, nullptr, 0, true);
+
+	pACK[0] = outbuf[0];
+	pACK[1] = outbuf[1];
 	
 	if (result!=STATUS_OK) {
 		return result;
@@ -1218,6 +1221,68 @@ MFRC522::StatusCode MFRC522::PCD_NTAG216_AUTH(byte* passWord, byte pACK[]) //Aut
 	
 	return STATUS_OK;
 } // End PCD_NTAG216_AUTH()
+
+/**
+ * Helper routine to read the nfc one-way counter value from an NTAG.
+ * 
+ *  ref: https://www.nxp.com/docs/en/data-sheet/NTAG213_215_216.pdf sec 10.6
+ * @param[out]  value       24-bit integer.
+ * @return STATUS_OK on success, STATUS_??? otherwise.
+  */
+MFRC522::StatusCode MFRC522::NTAG_Read_Counter(uint32_t *value) {
+	MFRC522::StatusCode status;
+	byte cmdbuffer[4];
+	byte outbuf[5] = {0,0,0,0,0};
+	byte sendLen = 4;
+	byte responseLen = 5;
+ 
+	uint32_t counter = 99;
+	// Build command buffer
+	cmdbuffer[0] = 0x39; // READ_CNT command
+	cmdbuffer[1] = 0x02; // nfc counter addr
+	// Calculate CRC_A
+	status = PCD_CalculateCRC(cmdbuffer, 2, &cmdbuffer[2]);
+	if (status != STATUS_OK) {
+		return status;
+	}
+	// Transmit the buffer and receive the response, validate CRC_A.
+
+	status = PCD_TransceiveData(cmdbuffer, sendLen, outbuf, &responseLen, nullptr, 0, true);
+	
+	counter = outbuf[2] << 16 | outbuf[1] << 8 | outbuf[0]; // LSByte first?
+	Serial.println(counter, HEX);
+	memcpy(value, &outbuf, 3);
+	return status;
+
+} // End NTAG_Read_Counter()
+
+
+MFRC522::StatusCode MFRC522::NTAG_Get_Version(byte *version) {
+	MFRC522::StatusCode status;
+	byte cmdbuffer[3];
+	byte responseLen = 8+2;
+	byte buf[10];
+	memset(buf, 0, 10);
+ 
+	// Build command buffer
+	cmdbuffer[0] = 0x60; // GET_VERSION command
+	// Calculate CRC_A
+	status = PCD_CalculateCRC(cmdbuffer, 1, &cmdbuffer[1]);
+	if (status != STATUS_OK) {
+		return status;
+	}
+	// Transmit the buffer and receive the response, validate CRC_A.
+
+	status = PCD_TransceiveData(cmdbuffer, sizeof(cmdbuffer), buf, &responseLen, nullptr, 0, true);
+	memcpy(version, buf, 8);
+	// Transceive the data, store the reply in cmdBuffer[]
+	//byte waitIRq = 0x30;		// RxIRq and IdleIRq
+	//byte cmdBufferSize = sizeof(cmdbuffer);
+	//byte validBits = 0;
+	//status = PCD_CommunicateWithPICC(PCD_Transceive, waitIRq, cmdbuffer, sendLen, outbuf, &responseLen, &validBits);
+	//Serial.println(counter, HEX);
+	return status;
+}
 
 
 /////////////////////////////////////////////////////////////////////////////////////
@@ -1641,7 +1706,7 @@ void MFRC522::PICC_DumpMifareUltralightToSerial() {
 	
 	Serial.println(F("Page  0  1  2  3"));
 	// Try the mpages of the original Ultralight. Ultralight C has more pages.
-	for (byte page = 0; page < 16; page +=4) { // Read returns data for 4 pages at a time.
+	for (byte page = 0; page < 45; page +=4) { // Read returns data for 4 pages at a time.
 		// Read pages
 		byteCount = sizeof(buffer);
 		status = MIFARE_Read(page, buffer, &byteCount);
@@ -1877,7 +1942,7 @@ bool MFRC522::MIFARE_SetUid(byte *newUid, byte uidSize, bool logErrors) {
 bool MFRC522::MIFARE_UnbrickUidSector(bool logErrors) {
 	MIFARE_OpenUidBackdoor(logErrors);
 	
-	byte block0_buffer[] = {0x01, 0x02, 0x03, 0x04, 0x04, 0x08, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};	
+	byte block0_buffer[] = {0x01, 0x02, 0x03, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 	
 	// Write modified block 0 back to card
 	MFRC522::StatusCode status = MIFARE_Write((byte)0, block0_buffer, (byte)16);

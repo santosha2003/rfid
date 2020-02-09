@@ -83,9 +83,7 @@
 #include <Arduino.h>
 #include <SPI.h>
 
-#ifndef MFRC522_SPICLOCK
 #define MFRC522_SPICLOCK SPI_CLOCK_DIV4			// MFRC522 accept upto 10MHz
-#endif
 
 // Firmware data for self-test
 // Reference values based on firmware version
@@ -277,7 +275,10 @@ public:
 		PICC_CMD_MF_TRANSFER	= 0xB0,		// Writes the contents of the internal data register to a block.
 		// The commands used for MIFARE Ultralight (from http://www.nxp.com/documents/data_sheet/MF0ICU1.pdf, Section 8.6)
 		// The PICC_CMD_MF_READ and PICC_CMD_MF_WRITE can also be used for MIFARE Ultralight.
-		PICC_CMD_UL_WRITE		= 0xA2		// Writes one 4 byte page to the PICC.
+		PICC_CMD_UL_WRITE		= 0xA2,		// Writes one 4 byte page to the PICC.
+		// NTAG commands (ref: https://www.nxp.com/docs/en/data-sheet/NTAG213_215_216.pdf)
+		PICC_CMD_NT_READ_CNT	= 0x39,		// read nfc one-way 24-bit counter
+		PICC_CMD_NT_READ_SIG	= 0x3C		// read nxp 32-byte signature
 	};
 	
 	// MIFARE constants that does not fit anywhere else
@@ -394,6 +395,9 @@ public:
 	StatusCode MIFARE_GetValue(byte blockAddr, int32_t *value);
 	StatusCode MIFARE_SetValue(byte blockAddr, int32_t value);
 	StatusCode PCD_NTAG216_AUTH(byte *passWord, byte pACK[]);
+	StatusCode NTAG_Read_Counter(uint32_t *value);
+	StatusCode NTAG_Get_Version(byte *version);
+	//StatusCode NTAG_Read_Signature(byte *buffer);
 	
 	/////////////////////////////////////////////////////////////////////////////////////
 	// Support functions
